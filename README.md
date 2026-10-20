@@ -11,7 +11,7 @@
 >
 > Waiting on an approval or on a question is logged and notified, never answered on your behalf. A stop you pressed yourself, a turn that really finished, and non-retryable errors (auth, quota, context overflow) are all left alone. Detection is pure structure over the session log — no judge model, no network calls.
 >
-> Install: `dsh plugin --profile <profile> add <path-to-this-repo>`, or run `install.ps1`. Config: `<DSH_HOME>/unstuck/config.json`. Log: `<DSH_HOME>/unstuck/unstuck.jsonl`. The detailed documentation below is in Chinese; `PLUGIN-NOTES.md` records why each decision was made.
+> Install: `dsh plugin --profile <profile> add github:Chlyz621/dsh-unstuck` (or run `install.ps1` from a local clone). Config: `<DSH_HOME>/unstuck/config.json`. Log: `<DSH_HOME>/unstuck/unstuck.jsonl`. The detailed documentation below is in Chinese; `PLUGIN-NOTES.md` records why each decision was made.
 
 ---
 
@@ -67,6 +67,18 @@ dsh 自带的「继续」按钮也救不了它 —— 那个按钮把 `completed
 ---
 
 ## 安装
+
+两种装法。只想装上用走第一种；要改代码或者离线装走第二种。
+
+### 一、从 GitHub 装（推荐）
+
+```powershell
+dsh plugin --profile tauri add github:Chlyz621/dsh-unstuck
+```
+
+dsh 会把仓库取到 profile 的 `node_modules` 下并登记进 `dsh.profile.bundles`。装完**完全退出** DeepSeek Harness（含托盘图标）再打开。
+
+### 二、从本地目录装（改代码时用）
 
 ```powershell
 cd <仓库根目录>
