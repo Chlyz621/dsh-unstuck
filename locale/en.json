@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Unstuck",
+    "description": "Keeps a run going by itself: continues turns that stopped silently, revives stalled model requests, and reports waits on approval or questions."
+  }
+}

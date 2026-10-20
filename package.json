@@ -1,0 +1,52 @@
+{
+  "name": "dsh-unstuck",
+  "version": "0.2.1",
+  "description": "Auto-recovery for DeepSeek Harness: continues turns that stopped silently or abnormally, revives stalled model requests, and reports waits on approval or questions. Pure structural detection, no judge model.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json",
+    "./locale/*": "./locale/*"
+  },
+  "files": [
+    "lib",
+    "locale",
+    "tools",
+    "LICENSE",
+    "cordis.patch.yml",
+    "README.md",
+    "PLUGIN-NOTES.md",
+    "icon.svg",
+    "unstuck.config.example.json",
+    "install.ps1",
+    "uninstall.ps1"
+  ],
+  "icon": "icon.svg",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "unstuck",
+    "auto-continue",
+    "watchdog"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dshTarget": "0.2.1-rc.2"
+}

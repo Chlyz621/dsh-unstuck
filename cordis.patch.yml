@@ -1,0 +1,51 @@
+# dsh-unstuck bundle patch
+#
+# 装进 profile 之后，这一层会插入一个 dsh-unstuck 条目。
+# 这里写的 config 只是「初始值」：真正的调参请改
+#   <DSH_HOME>/unstuck/config.json
+# 那个文件优先级更高，改完重启 dsh 生效（不用改本文件、不用重装）。
+#
+# 注意：dsh-purge 的 autoRetry 已经在做请求重试（profile 里默认开着）。
+# 本插件 autoRetry 默认 false，避免两边叠成 6 次重试。
+# 想统一交给监督员管，就在 profile 的 cordis.patch.yml 里把
+# dsh-purge 的 autoRetry 关掉，再打开下面这个。
+
+- insert:
+    - id: dsh-unstuck
+      name: 'dsh-unstuck'
+      config:
+        enabled: true
+        verbose: false
+
+        # 轮次异常结束 → 补一条「继续」
+        autoContinue: true
+        continueMax: 3
+        continueText: "继续"
+        continueDelayMs: 700
+        backoffMs: [1500, 5000, 15000]
+
+        # 「假完成」也续跑：turn/end 写着 completed，其实工具调用被中转站吞成正文，
+        # agent 静默 idle —— 这是实测里最常见的断连形态（见 README 的「断连根因」）
+        continueOnSwallowed: true
+        continueTextSwallowed: "继续。你上一条消息里的工具调用没有正常发出，请直接重新发起工具调用，不要重复解释。"
+
+        # 模型请求重试（默认交给 dsh-purge）
+        autoRetry: false
+        retryMax: 2
+
+        # 假死检测：请求发出后多久没有任何流片段就掐掉重来
+        stallEnabled: true
+        stallMs: 180000
+        stallResumeMs: 800
+        tickMs: 15000
+        hardStallMs: 0
+
+        # 卡在等审批 / 等回答时提醒
+        notifyBlocked: true
+        blockedNotifyMs: 120000
+
+        # 通知命令，{msg} 会被替换成正文；留空则只写日志
+        notifyCommand: ""
+
+        # 子 agent 默认不插手
+        skipOwnedAgents: true

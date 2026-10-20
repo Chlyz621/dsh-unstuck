@@ -1,0 +1,30 @@
+{
+  "_说明": "把本文件复制到 <DSH_HOME>\\unstuck\\config.json 再改。没这个文件时用内置默认值。改完重启 dsh 生效。",
+
+  "enabled": true,
+  "verbose": false,
+
+  "autoContinue": true,
+  "continueMax": 3,
+  "continueText": "继续",
+  "continueDelayMs": 700,
+  "backoffMs": [1500, 5000, 15000],
+
+  "continueOnSwallowed": true,
+  "continueTextSwallowed": "继续。你上一条消息里的工具调用没有正常发出，请直接重新发起工具调用，不要重复解释。",
+
+  "autoRetry": false,
+  "retryMax": 2,
+
+  "stallEnabled": true,
+  "stallMs": 180000,
+  "stallResumeMs": 800,
+  "tickMs": 15000,
+  "hardStallMs": 0,
+
+  "notifyBlocked": true,
+  "blockedNotifyMs": 120000,
+  "notifyCommand": "",
+
+  "skipOwnedAgents": true
+}
