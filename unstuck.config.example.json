@@ -13,6 +13,10 @@
   "continueOnSwallowed": true,
   "continueTextSwallowed": "继续。你上一条消息里的工具调用没有正常发出，请直接重新发起工具调用，不要重复解释。",
 
+  "continueOnUserAbort": "never",
+  "notifyUserAbort": true,
+  "pauseOnUnansweredQuestion": "mutate",
+
   "autoRetry": false,
   "retryMax": 2,
 

@@ -29,6 +29,20 @@
         continueOnSwallowed: true
         continueTextSwallowed: "继续。你上一条消息里的工具调用没有正常发出，请直接重新发起工具调用，不要重复解释。"
 
+        # 你按了停止（turn/end = aborted{kind:'user'}）怎么办：
+        #   never  = 一律不碰（默认，你按停止就是停止）
+        #   silent = 只在「这一轮一个字都没输出」时补一条
+        #            （实测 8 次用户中断全是零输出，和「界面看着卡住我按一下」分不清）
+        #   always = 只要不是监督员自己掐的都续（不建议）
+        continueOnUserAbort: never
+        notifyUserAbort: true
+
+        # 「问了不等」：正文在等你点头，模型却自己往下干 → 掐掉这一轮，把发言权还给你
+        #   off    = 不管
+        #   mutate = 只有它开始动文件（write/edit/delete/apply_patch…）才掐（默认）
+        #   any    = 问完只要还有下一步动作（含 shell）就掐
+        pauseOnUnansweredQuestion: mutate
+
         # 模型请求重试（默认交给 dsh-purge）
         autoRetry: false
         retryMax: 2

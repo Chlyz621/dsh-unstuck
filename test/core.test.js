@@ -18,11 +18,16 @@ import {
   isHumanSourceKind,
   isUserAbort,
   lastTurnEnd,
+  lastTurnHasText,
   looksOwned,
   makeContinueMessage,
+  mutatingCallsOf,
   sessionEventsOf,
   shouldAutoContinue,
+  tailAsksForAnswer,
   tailLooksLikeDsml,
+  textOfMessage,
+  toolCallsOf,
 } from "../lib/core.js";
 import { DEFAULT_CONFIG, normalizeConfig } from "../lib/config.js";
 
@@ -389,4 +394,109 @@ test("inspectStop：正常 completed 不会被误判成 swallowed", () => {
   assert.equal(stop.kind, "completed");
   assert.equal(stop.swallowed, undefined);
   assert.equal(shouldAutoContinue(stop.reason, cfg), false);
+});
+
+// ---------------------------------------------------------------- 问了不等
+
+const ASK_REAL =
+  "## 需要你点头的只有一件事\n上面这个 5 表 3 页的范围，**你认可吗？**\n- 认可 → 我下一轮直接出 NestJS 工程骨架。";
+
+test("tailAsksForAnswer：认出真实的求确认", () => {
+  assert.equal(tailAsksForAnswer(ASK_REAL), true);
+  assert.equal(tailAsksForAnswer("上面的方案你看下，可以吗"), true);
+  assert.equal(tailAsksForAnswer("这一步你想先做哪块？"), true);
+  assert.equal(tailAsksForAnswer("请确认后我再动手"), true);
+});
+
+test("tailAsksForAnswer：普通陈述不算", () => {
+  assert.equal(tailAsksForAnswer("我已经把 5 张表建好了，接下来写接口。"), false);
+  assert.equal(tailAsksForAnswer(""), false);
+  assert.equal(tailAsksForAnswer(undefined), false);
+});
+
+test("tailAsksForAnswer：代码围栏里的问号不算（解释规则时不误伤）", () => {
+  const quoted = "判据是下面这个正则：\n```js\n/[你您][^。！？\\n]{0,40}[？?]/\n```\n就这样。";
+  assert.equal(tailAsksForAnswer(quoted), false);
+});
+
+test("tailAsksForAnswer：只看尾部 400 字，很久以前的问句不算", () => {
+  const long = "你认可吗？" + "接下来都是陈述句，没有任何提问。" .repeat(40);
+  assert.equal(tailAsksForAnswer(long), false);
+});
+
+test("mutatingCallsOf：只认会动文件的工具", () => {
+  const msg = {
+    content: [
+      { type: "tool-call", name: "write", input: {} },
+      { type: "tool-call", name: "bash", input: {} },
+      { type: "tool-call", name: "edit", input: {} },
+      { type: "text", text: "hi" },
+    ],
+  };
+  assert.deepEqual(
+    mutatingCallsOf(msg).map((c) => c.name),
+    ["write", "edit"],
+  );
+  assert.equal(toolCallsOf(msg).length, 3, "bash 是调用，但不动文件");
+  assert.equal(mutatingCallsOf({}).length, 0);
+  assert.equal(mutatingCallsOf(null).length, 0);
+});
+
+test("textOfMessage：只取 text，不取 reasoning", () => {
+  const msg = {
+    content: [
+      { type: "reasoning", text: "内部思考" },
+      { type: "text", text: "给你看的" },
+      { type: "tool-call", name: "write", input: {} },
+    ],
+  };
+  assert.equal(textOfMessage(msg), "给你看的");
+  assert.equal(textOfMessage(undefined), "");
+});
+
+test("lastTurnHasText：这一轮到底有没有给用户看到正文", () => {
+  const withText = [
+    { type: "assistant/message", seq: 3, data: { turn: 2, step: 1, message: { content: [{ type: "text", text: "装好了" }] } } },
+    { type: "turn/end", seq: 6, data: { turn: 2, reason: { kind: "aborted", reason: { kind: "user" } } } },
+  ];
+  assert.equal(lastTurnHasText(withText), true);
+
+  // 实测里那 8 次用户中断全是这种：中断落在 step 边界，一个字都没落地
+  const zero = [
+    { type: "assistant/message", seq: 3, data: { turn: 1, step: 1, message: { content: [{ type: "text", text: "上一轮的话" }] } } },
+    { type: "turn/end", seq: 6, data: { turn: 2, reason: { kind: "aborted", reason: { kind: "user" } } } },
+  ];
+  assert.equal(lastTurnHasText(zero), false);
+  assert.equal(lastTurnHasText([]), false);
+});
+
+test("shouldAutoContinue：用户中断按 continueOnUserAbort 三档走", () => {
+  const userAbort = { kind: "aborted", reason: { kind: "user" } };
+  const never = normalizeConfig({ continueOnUserAbort: "never" });
+  const silent = normalizeConfig({ continueOnUserAbort: "silent" });
+  const always = normalizeConfig({ continueOnUserAbort: "always" });
+
+  assert.equal(shouldAutoContinue(userAbort, never, { zeroOutput: true }), false);
+  assert.equal(shouldAutoContinue(userAbort, silent, { zeroOutput: true }), true);
+  assert.equal(shouldAutoContinue(userAbort, silent, { zeroOutput: false }), false);
+  assert.equal(shouldAutoContinue(userAbort, always, { zeroOutput: false }), true);
+});
+
+test("shouldAutoContinue：插件自己掐的轮次永远不续（防自激）", () => {
+  const hookAbort = { kind: "aborted", reason: { kind: "hook", reason: "unstuck-stall" } };
+  assert.equal(shouldAutoContinue(hookAbort, normalizeConfig({ continueOnUserAbort: "always" }), {}), true);
+  // 但 stall 路径自己有 suppressAutoContinue 兜着，这里只保证判定不误伤
+  const disposed = { kind: "aborted", reason: { kind: "disposed" } };
+  assert.equal(shouldAutoContinue(disposed, normalizeConfig({}), {}), false, "会话被销毁不该续");
+});
+
+test("配置：新键的三档归一化，写错退回默认", () => {
+  assert.equal(normalizeConfig({}).continueOnUserAbort, "never");
+  assert.equal(normalizeConfig({ continueOnUserAbort: "SILENT" }).continueOnUserAbort, "silent");
+  assert.equal(normalizeConfig({ continueOnUserAbort: "乱写" }).continueOnUserAbort, "never");
+  assert.equal(normalizeConfig({}).pauseOnUnansweredQuestion, "mutate");
+  assert.equal(normalizeConfig({ pauseOnUnansweredQuestion: "Any" }).pauseOnUnansweredQuestion, "any");
+  assert.equal(normalizeConfig({ pauseOnUnansweredQuestion: "x" }).pauseOnUnansweredQuestion, "mutate");
+  assert.equal(normalizeConfig({}).notifyUserAbort, true);
+  assert.equal(normalizeConfig({ notifyUserAbort: false }).notifyUserAbort, false);
 });

@@ -1,7 +1,7 @@
 {
   "name": "dsh-unstuck",
-  "version": "0.2.1",
-  "description": "Auto-recovery for DeepSeek Harness: continues turns that stopped silently or abnormally, revives stalled model requests, and reports waits on approval or questions. Pure structural detection, no judge model.",
+  "version": "0.3.0",
+  "description": "Auto-recovery for DeepSeek Harness: continues turns that stopped silently or abnormally, revives stalled model requests, pauses when a turn asks you a question and then runs ahead without waiting, and reports waits on approval or questions. Pure structural detection, no judge model.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Chlyz621/dsh-unstuck.git"

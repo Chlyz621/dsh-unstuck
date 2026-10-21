@@ -154,6 +154,33 @@ Node 按到期时间先跑巡检 → 直接掐掉 → 断言才看到 `cancels.l
 顺带一个坑：`cfg.tickMs` 在 `config.js` 里被 clamp 到 **最小 1000ms**，
 写测试时等 300ms 是等不到任何一次巡检的。
 
+### 7. 「静默中断」不止假完成一种：问了不等、零输出中断
+
+用户报「你把有的问题直接跳过了」，指向 `session-d54e23f7`（2026-10-22 02:07–02:10）。
+逐事件拆开，里面其实**两件不同的事**叠在一起：
+
+**(a) 问了不等。** assistant 在 02:07:24 的正文末尾写「上面这个 5 表 3 页的范围，**你认可吗？**」
+并承诺「认可 → 我下一轮直接出工程骨架」，然后**同一个轮次**里 02:07:51 就 `mkdir` 开工，
+02:10:10 装完 244 个包。用户 02:10:11 按停止，02:10:22 问「你刚刚都给我提了什么问题？」。
+`turn/end` 记的是 `aborted{kind:'user'}` —— 从日志看是「用户中止」，从体验看是「它没等我」。
+
+**(b) 零输出的用户中断。** 全量审计所有会话的 `turn/end`：
+`completed` 100、`aborted{user}` 8、`max-tokens` 3、`error` 3、`aborted{disposed}` 2、`interrupted` 1。
+那 8 次 `aborted{user}` **全部**是「末 step 正文长度 0」—— 中断落在 step 边界，
+一个字都没落地。这种和「界面看着卡住、我按一下」在日志里完全同形，
+插件原来一律按 `user-abort` 跳过，于是一次都不管。
+
+修法：
+- `pauseOnUnansweredQuestion`（默认 `mutate`）：`tailAsksForAnswer` 认出正文尾部 400 字里的求确认
+  措辞或第二人称问句 → 记位置；同轮后续 step 出现 `MUTATING_TOOLS` 里的工具调用就
+  `cancel({kind:'hook'}, {keepInbox:true})` 并置 `suppressAutoContinue`，**不补「继续」**。
+  代码围栏里的问号不算（否则解释这条规则时自己误伤自己）。`bash` 不算「动文件」，
+  否则「问一句然后 ls 一下」会被误判。
+- `continueOnUserAbort`（默认 `never`）：`silent` 时只在 `lastTurnHasText` 为假（零输出）才续。
+  实测依据就是上面那 8 次全零输出。
+- `shouldAutoContinue` 现在显式拒绝 `causeKindOf(reason) === "disposed"` —— 会话被销毁时
+  agent 已经不在，续跑只会在空对象上发消息。
+
 ---
 
 ## 五、和别的方案的关系
@@ -275,6 +302,20 @@ Node 按到期时间先跑巡检 → 直接掐掉 → 断言才看到 `cancels.l
 - 结论写进文档：热重载靠的是**插件目录的文件变更**；改配置要写 `unstuck/config.json` 再重启；
   兜底手段是重跑 `install.ps1` 或重启桌面端。
 - README「开发」节补上同步命令与验证方法。
+
+### 0.3.0 — 2026-10-22（问了不等 / 零输出中断）
+
+用户报「你把有的问题直接跳过了」，定位到 `session-d54e23f7`，拆出两种以前一律放过的形态：
+
+- 新增 `pauseOnUnansweredQuestion`（`off` / `mutate` / `any`，默认 `mutate`）：
+  正文问完就动文件 → `cancel({kind:'hook'}, {keepInbox:true})`，不补「继续」，
+  记 `question-paused`。判据 `core.tailAsksForAnswer` + `MUTATING_TOOLS`。
+- 新增 `continueOnUserAbort`（`never` / `silent` / `always`，默认 `never`）与
+  `core.lastTurnHasText`：实测 8 次 `aborted{user}` 全是零输出，`silent` 只救这种。
+- 新增 `notifyUserAbort`（默认 true）：零输出的用户中断额外提醒一次，记 `user-abort-noted`。
+- `shouldAutoContinue` 显式拒绝 `disposed` 原因。
+- 坑 7 写进第四节；README 新增「问了不等」整节。
+- 57 → 77 个单测（+10 plugin 级、+10 core 级）。
 
 ### 0.1.0 — 2026-10-21
 

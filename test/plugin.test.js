@@ -512,8 +512,186 @@ test("enabled=false 时完全不装配", async () => {
   await ctx.disposeAll();
 });
 
-test("日志文件真的写出来了", async () => {
+// ---------------------------------------------------------------- 问了不等
+
+const ASK_BODY =
+  "## 需要你点头的只有一件事\n上面这个 5 表 3 页的范围，**你认可吗？**\n- 认可 → 我下一轮直接出工程骨架。";
+
+test("问了不等：问完不等人回答就动文件 → 掐掉这一轮，且不自动续跑", async () => {
+  const ctx = boot({ pauseOnUnansweredQuestion: "mutate" });
+  const agent = createAgent("s30", []);
+  agent.status = "running";
+  const session = { id: "s30" };
+
+  ctx.emit("agent/status", { agent, status: "running" });
+  ctx.emit("session/event", session, asstMessage(10, 1, [{ type: "text", text: ASK_BODY }]));
+  assert.equal(agent.cancels.length, 0, "只是问了一句，不该动手");
+
+  ctx.emit("session/event", session, asstMessage(11, 2, [{ type: "tool-call", name: "write", input: {} }]));
+  assert.equal(agent.cancels.length, 1, "问完就去写文件，要掐");
+  assert.equal(agent.cancels[0].cause.kind, "hook", "不能冒充用户中断");
+  assert.equal(agent.cancels[0].options.keepInbox, true);
+
+  // 掐完 agent 回 idle，监督员不能顺手补「继续」把发言权抢回去
+  ctx.emit("agent/status", { agent, status: "idle" });
+  await wait(20);
+  assert.equal(agent.sent.length, 0, "问了不等之后不该自动续跑");
+  await ctx.disposeAll();
+});
+
+test("问了不等：问完只是读文件（不动文件）不掐", async () => {
+  const ctx = boot({ pauseOnUnansweredQuestion: "mutate" });
+  const agent = createAgent("s31", []);
+  agent.status = "running";
+  const session = { id: "s31" };
+
+  ctx.emit("agent/status", { agent, status: "running" });
+  ctx.emit("session/event", session, asstMessage(10, 1, [{ type: "text", text: ASK_BODY }]));
+  ctx.emit("session/event", session, asstMessage(11, 2, [{ type: "tool-call", name: "bash", input: {} }]));
+  assert.equal(agent.cancels.length, 0, "读一下不算开工");
+  await ctx.disposeAll();
+});
+
+test("问了不等：any 模式下连只读命令也掐", async () => {
+  const ctx = boot({ pauseOnUnansweredQuestion: "any" });
+  const agent = createAgent("s32", []);
+  agent.status = "running";
+  const session = { id: "s32" };
+
+  ctx.emit("agent/status", { agent, status: "running" });
+  ctx.emit("session/event", session, asstMessage(10, 1, [{ type: "text", text: ASK_BODY }]));
+  ctx.emit("session/event", session, asstMessage(11, 2, [{ type: "tool-call", name: "bash", input: {} }]));
+  assert.equal(agent.cancels.length, 1);
+  await ctx.disposeAll();
+});
+
+test("问了不等：off 模式完全不管", async () => {
+  const ctx = boot({ pauseOnUnansweredQuestion: "off" });
+  const agent = createAgent("s33", []);
+  agent.status = "running";
+  const session = { id: "s33" };
+
+  ctx.emit("agent/status", { agent, status: "running" });
+  ctx.emit("session/event", session, asstMessage(10, 1, [{ type: "text", text: ASK_BODY }]));
+  ctx.emit("session/event", session, asstMessage(11, 2, [{ type: "tool-call", name: "write", input: {} }]));
+  assert.equal(agent.cancels.length, 0);
+  await ctx.disposeAll();
+});
+
+test("问了不等：你回话之后就不算「没等」", async () => {
+  const ctx = boot({ pauseOnUnansweredQuestion: "mutate" });
+  const agent = createAgent("s34", []);
+  agent.status = "running";
+  const session = { id: "s34" };
+
+  ctx.emit("agent/status", { agent, status: "running" });
+  ctx.emit("session/event", session, asstMessage(10, 1, [{ type: "text", text: ASK_BODY }]));
+  ctx.emit("session/event", session, {
+    type: "user/message",
+    seq: 11,
+    data: { id: "u1", role: "user", content: [{ type: "text", text: "认可" }], source: { kind: "user" } },
+  });
+  ctx.emit("session/event", session, asstMessage(12, 2, [{ type: "tool-call", name: "write", input: {} }]));
+  assert.equal(agent.cancels.length, 0, "你已经点头了，它往下做是对的");
+  await ctx.disposeAll();
+});
+
+test("问了不等：上一轮的提问不会跨轮误伤", async () => {
+  const ctx = boot({ pauseOnUnansweredQuestion: "mutate" });
+  const agent = createAgent("s35", []);
+  agent.status = "running";
+  const session = { id: "s35" };
+
+  ctx.emit("agent/status", { agent, status: "running" });
+  ctx.emit("session/event", session, asstMessage(10, 1, [{ type: "text", text: ASK_BODY }], 1));
+  ctx.emit("session/event", session, { type: "turn/end", seq: 11, data: { turn: 1, reason: { kind: "completed" } } });
+  ctx.emit("session/event", session, asstMessage(12, 1, [{ type: "tool-call", name: "write", input: {} }], 2));
+  assert.equal(agent.cancels.length, 0);
+  await ctx.disposeAll();
+});
+
+// ---------------------------------------------------------------- 用户中断
+
+const ABORTED_BY_USER = (seq, turn) => ({
+  type: "turn/end",
+  seq,
+  data: { turn, reason: { kind: "aborted", reason: { kind: "user" } } },
+});
+
+test("用户中断 + 默认 never → 不续跑，只记一笔", async () => {
   const home = makeHome();
+  const ctx = createFakeCtx();
+  apply(ctx, { continueDelayMs: 0, backoffMs: [0], stallEnabled: false, tickMs: 60000 });
+  const agent = createAgent("s36", [ABORTED_BY_USER(6, 2)]);
+
+  ctx.emit("agent/status", { agent, status: "idle" });
+  await wait(20);
+  assert.equal(agent.sent.length, 0, "你按了停止就是停止");
+  await ctx.disposeAll();
+
+  const lines = fs
+    .readFileSync(path.join(home, "unstuck", "unstuck.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l));
+  const skipped = lines.find((l) => l.event === "continue-skipped" && l.why === "user-abort");
+  assert.ok(skipped, "要留下 user-abort 记录");
+  assert.equal(skipped.zeroOutput, true, "这一轮一个字都没输出");
+  assert.ok(
+    lines.some((l) => l.event === "user-abort-noted"),
+    "零输出的用户中断要额外提醒一次（可能就是界面看着卡住）",
+  );
+});
+
+test("用户中断但已经出过正文 + never → 不续也不提醒", async () => {
+  const home = makeHome();
+  const ctx = createFakeCtx();
+  apply(ctx, { continueDelayMs: 0, backoffMs: [0], stallEnabled: false, tickMs: 60000 });
+  const agent = createAgent("s37", [
+    asstMessage(4, 1, [{ type: "text", text: "我已经把依赖装好了，接下来写建表 SQL。" }], 2),
+    ABORTED_BY_USER(6, 2),
+  ]);
+
+  ctx.emit("agent/status", { agent, status: "idle" });
+  await wait(20);
+  assert.equal(agent.sent.length, 0);
+  await ctx.disposeAll();
+
+  const lines = fs
+    .readFileSync(path.join(home, "unstuck", "unstuck.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l));
+  assert.ok(!lines.some((l) => l.event === "user-abort-noted"), "出过正文就是你自己叫停，不用吵你");
+});
+
+test("用户中断 + continueOnUserAbort=silent → 只在零输出时补一条「继续」", async () => {
+  const ctx = boot({ continueOnUserAbort: "silent" });
+  const agent = createAgent("s38", [ABORTED_BY_USER(6, 2)]);
+
+  ctx.emit("agent/status", { agent, status: "idle" });
+  await wait(20);
+
+  assert.equal(agent.sent.length, 1);
+  assert.equal(agent.sent[0].content[0].text, "继续");
+  assert.equal(agent.sent[0].source.kind, "dsh-unstuck");
+  await ctx.disposeAll();
+});
+
+test("用户中断 + silent 但已经出过正文 → 不续", async () => {
+  const ctx = boot({ continueOnUserAbort: "silent" });
+  const agent = createAgent("s39", [
+    asstMessage(4, 1, [{ type: "text", text: "我先把表建好。" }], 2),
+    ABORTED_BY_USER(6, 2),
+  ]);
+
+  ctx.emit("agent/status", { agent, status: "idle" });
+  await wait(20);
+  assert.equal(agent.sent.length, 0);
+  await ctx.disposeAll();
+});
+
+test("日志文件真的写出来了", async () => {  const home = makeHome();
   const ctx = createFakeCtx();
   apply(ctx, { continueDelayMs: 0, backoffMs: [0], stallEnabled: false, tickMs: 60000 });
   const agent = createAgent("s23", [turnEnd(1, { kind: "error", error: { code: "NETWORK" } })]);

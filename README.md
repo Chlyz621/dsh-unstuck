@@ -15,13 +15,14 @@
 
 ---
 
-## 它管三件事
+## 它管四件事
 
 | 现象 | 监督员怎么做 |
 | --- | --- |
 | 一轮对话异常结束（上游报错、输出被截断、进程崩溃留下的残局、非你按的中断） | 等一小会儿，补发一条「继续」 |
 | **「假完成」**：日志写着这轮正常结束，其实工具调用被吞了、活没干完（最常见，见下节） | 补一条带指向性的「继续」，让它重新发工具调用 |
 | 模型请求发出去了，但很久**没有任何流片段**（假死：TCP 断了但不报错） | 掐掉当前这一轮，再补「继续」 |
+| **「问了不等」**：正文问你「你认可吗？」，你没回它，它自己往下开工 | 掐掉这一轮，把发言权还给你（见「问了不等」一节） |
 | 卡在等你审批 / 等你回答问题 | 只记录 + 通知，**绝不替你回答** |
 
 不插手的情况：你按了停止、你这轮真的干完了、你正在输入（inbox 里有你的消息）、连续中断超过预算、认证失败这类再试也没用的错误。
@@ -55,6 +56,35 @@ dsh 自带的「继续」按钮也救不了它 —— 那个按钮把 `completed
 - **换模型**：`glm-5.3` / `kimi-k3-1` / `minimax-m3` 这些模型原生就是 OpenAI 风格的工具调用，不走 DSML，理论上不会踩这个坑。改 profile 的 `agent-default-model` 即可。
 - **降 `reasoningEffort`**：`max` 会让 reasoning 特别长，长流更容易在中转站出错。降到 `high` 试试。
 - **换官方端点**：DeepSeek 官方 API 不会有这层转换。
+
+---
+
+## 问了不等：它问你「你认可吗」，然后自己开工
+
+这是实测抓到的另一种更隐蔽的中断，2026-10-22 02:07 在会话 `session-d54e23f7` 里完整发生了一遍：
+
+| 时刻 | 发生了什么 |
+| --- | --- |
+| 02:07:24 | assistant 正文写「上面这个 5 表 3 页的范围，**你认可吗？**」，并承诺「认可 → 我下一轮直接出工程骨架」 |
+| 02:07:51 | **同一个轮次**里自己开始建工程（`mkdir` → 写 `package.json` → `npm install`） |
+| 02:10:10 | 装完 244 个包，后台起好了 |
+| 02:10:11 | 你按了停止，然后问「你刚刚都给我提了什么问题？」 |
+
+问题不在「它做错了」，而在**它把「等你点头」和「先干起来」放在了同一个轮次里**：你还没来得及回答，工已经开了一半。等你想改主意，成本已经产生了。
+
+`pauseOnUnansweredQuestion` 就是拦这个：
+
+| 值 | 行为 |
+| --- | --- |
+| `off` | 不管 |
+| `mutate`（默认） | 问完之后只要它开始**动文件**（`write` / `edit` / `delete` / `apply_patch` …）就掐 |
+| `any` | 问完之后只要有**任何**下一步动作（含 `bash`）就掐 |
+
+判定用的是结构而不是关键字：正文最后 400 字里出现求确认措辞（「你认可吗」「需要你点头」「请确认」…）或第二人称问句（`你/您 … ？`）。代码围栏里的问号不算 —— 否则它解释这条规则的时候会被自己误伤。
+
+掐掉之后**不会**自动补「继续」，因为该说话的是你。日志里留一条 `question-paused`。
+
+> 只在它真的往下干的时候才掐。只是问一句、然后等你回话，是正常行为。
 
 ---
 
@@ -126,6 +156,8 @@ Get-Content "$env:USERPROFILE\.dsh\unstuck\unstuck.jsonl" -Tail 20
 | `continue-budget-exhausted` | 预算用完，需要人看一眼 |
 | `stall-detected` | 判定假死（带 silenceMs） |
 | `clock-jump` | 机器睡眠/事件循环被卡，这一轮巡检只搬时间锚点、不判定（带 gapMs） |
+| `question-paused` | 命中「问了不等」，掐掉了这一轮（带 tools：它本来要动哪些文件） |
+| `user-abort-noted` | 你按了停止、且这一轮一个字都没输出（可能就是界面看着卡住） |
 | `question-asked` / `approval-asked` | 记录了你被卡住 |
 | `question-blocked` / `approval-blocked` | 卡太久，提醒你 |
 | `request-retry` | 重试了一次模型请求（默认关闭） |
@@ -152,6 +184,9 @@ Copy-Item .\unstuck.config.example.json "$env:USERPROFILE\.dsh\unstuck\config.js
 | `continueText` | `"继续"` | 续跑发什么 |
 | `continueOnSwallowed` | `true` | 「假完成」也续跑，见「断连根因」一节 |
 | `continueTextSwallowed` | 带指向性的一句 | 「假完成」时发的措辞 |
+| `continueOnUserAbort` | `never` | 你按了停止怎么办：`never` 不碰 / `silent` 只在零输出时续 / `always` 一律续 |
+| `notifyUserAbort` | `true` | 零输出的用户中断额外提醒一次 |
+| `pauseOnUnansweredQuestion` | `mutate` | 「问了不等」拦不拦：`off` / `mutate` / `any`，见上文 |
 | `continueDelayMs` | `700` | 发现中断后先等多久 |
 | `backoffMs` | `[1500,5000,15000]` | 每次续跑额外等待 |
 | `continueOn` | 异常类原因 | 只在这些 turn 结束原因上续跑 |
@@ -175,7 +210,7 @@ Copy-Item .\unstuck.config.example.json "$env:USERPROFILE\.dsh\unstuck\config.js
 
 区别在于**它是手动的**——得你去点。本插件把那套判断搬进进程内、按事件自动触发，而且更保守：
 
-- 你按了停止 → 不续
+- 你按了停止 → 不续（`continueOnUserAbort` 默认 `never`；想连这种也救就设 `silent`）
 - 认证失败 / 余额不足 / 上下文超长 → 不续（点了也没用）
 - 连续中断超过 `continueMax` 次 → 停手并提醒
 - 你的消息一进来 → 立刻让位
