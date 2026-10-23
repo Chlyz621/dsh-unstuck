@@ -16,6 +16,7 @@
   "continueOnUserAbort": "never",
   "notifyUserAbort": true,
   "pauseOnUnansweredQuestion": "mutate",
+  "respectPendingQuestion": true,
 
   "autoRetry": false,
   "retryMax": 2,

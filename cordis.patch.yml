@@ -43,6 +43,11 @@
         #   any    = 问完只要还有下一步动作（含 shell）就掐
         pauseOnUnansweredQuestion: mutate
 
+        # 正文里把话头交给你（「回「可以」我就开始」「三处需要你点头」）→ 绝不补「继续」。
+        # 它没弹问题框、只在正文里让你确认/选择时，补一条「继续」等于替你把决定做了，
+        # 你没空回，它已经自己开工了。实测案例见 lib/core.js 的 tailAsksForAnswer 注释 B。
+        respectPendingQuestion: true
+
         # 模型请求重试（默认交给 dsh-purge）
         autoRetry: false
         retryMax: 2

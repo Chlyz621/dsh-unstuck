@@ -86,6 +86,35 @@ dsh 自带的「继续」按钮也救不了它 —— 那个按钮把 `completed
 
 > 只在它真的往下干的时候才掐。只是问一句、然后等你回话，是正常行为。
 
+### 没弹问题框、只在正文里让你确认时，也不续跑
+
+上面那一招只在「它已经开始动文件」时才拦得住。更常见的是另一种：它这一轮**正常结束了**，但结尾把话头交给了你——「三处需要你点头：① … 同意吗？② … 行吗？③ … 要不要排除？」「**回「可以」我就开始**」。它没弹问题框，只是让你在正文下面自己输。
+
+这种情况插件原来会补一条「继续」，于是你还没空回，它已经开工了。`respectPendingQuestion`（默认 `true`）就是关掉这个：
+
+| 你的处境 | 插件行为 |
+| --- | --- |
+| 结尾在等你拍板/选择 | **不补「继续」**，只在日志留 `continue-skipped` + `awaiting-answer`，并发一条通知告诉你它在等你 |
+| 这一轮只是普通陈述/还没干完就断了 | 照旧补「继续」 |
+| 你已经回过话了（哪怕只回「可以」） | 不再算「在等你」，该续就续 |
+
+判据分两档，都先剥掉被吞的工具调用残留、再忽略代码围栏：
+
+- **强信号（看正文最后 1200 字）**：模型明说在等你——「需要你点头」「要你拍板」「等你回」「回「…」」「我就开始」「说一声」「点头」「拍板」。
+- **弱信号（看最后 400 字）**：求确认措辞（「同意吗」「行吗」「可以吗」「要不要」「请确认」…）、第二人称问句（`你/您 … ？`）、或最后一行以问号收尾且带求确认语气。
+
+举例：`session-19b6c197` 第 45 轮那段正文里三个问句**一个「你」字都没有**（「要不要排除」「这个规则行吗」），旧版只看尾部 400 字的第二人称问句，全都漏了——现在靠「回「可以」我就开始」这个强信号接住。
+
+<details>
+<summary>想恢复成「不管它在聊什么，断了就续」</summary>
+
+```jsonc
+{ "respectPendingQuestion": false }
+```
+
+关掉之后行为回到 0.3.0：短阈值的求确认检测仍会被 `pauseOnUnansweredQuestion` 用来拦「问了不等」，但轮次结束后的续跑不再看这一点。
+</details>
+
 ---
 
 ## 三个必须知道的默认行为
@@ -157,6 +186,7 @@ Get-Content "$env:USERPROFILE\.dsh\unstuck\unstuck.jsonl" -Tail 20
 | `stall-detected` | 判定假死（带 silenceMs） |
 | `clock-jump` | 机器睡眠/事件循环被卡，这一轮巡检只搬时间锚点、不判定（带 gapMs） |
 | `question-paused` | 命中「问了不等」，掐掉了这一轮（带 tools：它本来要动哪些文件） |
+| `awaiting-answer` | 这一轮在等你回答，所以没有自动续跑（配 `continue-skipped` 的 `why: "awaiting-answer"` 看） |
 | `user-abort-noted` | 你按了停止、且这一轮一个字都没输出（可能就是界面看着卡住） |
 | `question-asked` / `approval-asked` | 记录了你被卡住 |
 | `question-blocked` / `approval-blocked` | 卡太久，提醒你 |
@@ -187,6 +217,7 @@ Copy-Item .\unstuck.config.example.json "$env:USERPROFILE\.dsh\unstuck\config.js
 | `continueOnUserAbort` | `never` | 你按了停止怎么办：`never` 不碰 / `silent` 只在零输出时续 / `always` 一律续 |
 | `notifyUserAbort` | `true` | 零输出的用户中断额外提醒一次 |
 | `pauseOnUnansweredQuestion` | `mutate` | 「问了不等」拦不拦：`off` / `mutate` / `any`，见上文 |
+| `respectPendingQuestion` | `true` | 轮次结束时正文在等你确认/选择 → **不**补「继续」，见上文 |
 | `continueDelayMs` | `700` | 发现中断后先等多久 |
 | `backoffMs` | `[1500,5000,15000]` | 每次续跑额外等待 |
 | `continueOn` | 异常类原因 | 只在这些 turn 结束原因上续跑 |

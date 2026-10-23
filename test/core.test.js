@@ -18,6 +18,7 @@ import {
   isHumanSourceKind,
   isUserAbort,
   lastTurnEnd,
+  lastTurnAwaitsAnswer,
   lastTurnHasText,
   looksOwned,
   makeContinueMessage,
@@ -499,4 +500,65 @@ test("配置：新键的三档归一化，写错退回默认", () => {
   assert.equal(normalizeConfig({ pauseOnUnansweredQuestion: "x" }).pauseOnUnansweredQuestion, "mutate");
   assert.equal(normalizeConfig({}).notifyUserAbort, true);
   assert.equal(normalizeConfig({ notifyUserAbort: false }).notifyUserAbort, false);
+});
+
+// ---------------------------------------- 「正文里让你确认/选择」的识别（v0.3.1）
+//
+// 实测案例 B：session-19b6c197 turn 45。旧检测器只扫尾部 400 字、只认「你/您…？」，
+// 这段正文里三个问句一个都没命中，插件于是补了「继续」，模型自己开工了。
+
+const ASK_REAL_B =
+  "方案已经定，四个都查清楚了。动手前把关键点摆一下（**三处需要你点头**）：\n\n" +
+  "## 1. 通讯录直接编辑成员\n点成员卡片上的 ✏️ → 弹小窗改。\n\n" +
+  "三个要你拍板的：\n\n" +
+  "**① 成员有账号时，改职务同步到账号**——同意吗？\n" +
+  "**② 关键岗位 = 模板里除民警/辅警之外的岗位**——这个规则行吗？\n" +
+  "**③ 6 个空分局**——要不要排除这类 0 人单位？\n\n" +
+  "回「可以」我就开始，预计一轮做完。";
+
+test("在等你回答：真实案例 B（三个问句都没有「你」字）要认出来", () => {
+  assert.equal(tailAsksForAnswer(ASK_REAL_B), true);
+});
+
+test("在等你回答：「需要你点头」离结尾很远也要认（宽窗口强信号）", () => {
+  const far = "需要你点头的有三处：\n" + "背景说明。".repeat(200) + "\n就这样。";
+  assert.equal(tailAsksForAnswer(far), true);
+});
+
+test("在等你回答：被吞的 DSML 残留不能当问句", () => {
+  const leaked = "Let me grep.</｜｜DSML｜｜ parameter> </｜｜DSML｜｜ invoke> </｜｜DSML｜｜ calls>";
+  assert.equal(tailAsksForAnswer(leaked), false);
+});
+
+test("在等你回答：旧误报案例（「？不必要。」+ DSML 残留）要判否", () => {
+  const fp = '另外考虑是否要加"（本笔录共 6 页）"？不必要。\n\n做内容完整性校验。</｜｜DSML｜｜ parameter>';
+  assert.equal(tailAsksForAnswer(fp), false);
+});
+
+test("在等你回答：代码围栏里的问号不算（解释规则时不能误伤自己）", () => {
+  const doc = "规则是：\n```js\n/[你您]？/\n```\n就这样。";
+  assert.equal(tailAsksForAnswer(doc), false);
+});
+
+test("在等你回答：普通陈述、空串都判否", () => {
+  assert.equal(tailAsksForAnswer("五张表已经建好，接下来写接口。"), false);
+  assert.equal(tailAsksForAnswer(""), false);
+  assert.equal(tailAsksForAnswer(undefined), false);
+});
+
+test("在等你回答：最后一行以问号收尾且带求确认语气", () => {
+  assert.equal(tailAsksForAnswer("我把方案列好了。\n要不要这样排？"), true);
+});
+
+test("lastTurnAwaitsAnswer：按最后一个轮次的最后一条正文判断", () => {
+  const askTurn = (turn, text) => [
+    { type: "assistant/message", seq: turn * 10, data: { turn, step: 1, message: { content: [{ type: "text", text }] } } },
+    { type: "turn/end", seq: turn * 10 + 1, data: { turn, reason: { kind: "max-tokens" } } },
+  ];
+  assert.equal(lastTurnAwaitsAnswer(askTurn(1, ASK_REAL_B)), true);
+  assert.equal(lastTurnAwaitsAnswer(askTurn(1, "开始干活。")), false);
+  // 第二轮只是普通陈述 → 即使第一轮问过，也不再算「在等你」
+  const two = [...askTurn(1, ASK_REAL_B), ...askTurn(2, "已经写完了。")];
+  assert.equal(lastTurnAwaitsAnswer(two), false);
+  assert.equal(lastTurnAwaitsAnswer([]), false);
 });

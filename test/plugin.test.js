@@ -744,3 +744,86 @@ test("时钟跳变：机器睡眠/事件循环被卡后，不把健康请求误�
   const lines = fs.readFileSync(logFile, "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.ok(lines.some((l) => l.event === "clock-jump"), "应该留下 clock-jump 记录");
 });
+
+// ------------------------------------------------ 正文里让你确认/选择就别续跑
+//
+// 用户 m01897 原话：「他可能没给我弹问题，只是让我在那确定、选择，让我自己输。
+// 这种情况下你就直接继续，我就没空输他让我选的内容。」
+// 实测案例 B（session-19b6c197 turn 45）的正文原文，旧检测器对它返回 false。
+
+const ASK_BODY_B =
+  "方案已经定，四个都查清楚了。动手前把关键点摆一下（**三处需要你点头**）：\n\n" +
+  "## 1. 通讯录直接编辑成员\n点成员卡片上的 ✏️ → 弹小窗改。\n\n" +
+  "三个要你拍板的：\n\n" +
+  "**① 成员有账号时，改职务同步到账号**——同意吗？\n" +
+  "**② 关键岗位 = 模板里除民警/辅警之外的岗位**——这个规则行吗？\n" +
+  "**③ 6 个空分局**——要不要排除这类 0 人单位？\n\n" +
+  "回「可以」我就开始，预计一轮做完。";
+
+test("正文里让你确认 → 不补「继续」（旧版会补，模型就自己开工了）", async () => {
+  const home = makeHome();
+  const ctx = createFakeCtx();
+  apply(ctx, { continueDelayMs: 0, backoffMs: [0], stallEnabled: false, tickMs: 60000, respectPendingQuestion: true });
+  const agent = createAgent("s40", [
+    asstMessage(10, 1, [{ type: "text", text: ASK_BODY_B }]),
+    turnEnd(11, { kind: "max-tokens" }),
+  ]);
+  ctx.emit("agent/status", { agent, status: "idle" });
+  await wait(30);
+
+  assert.equal(agent.sent.length, 0, "它在等你拍板，不能替你做决定");
+
+  await ctx.disposeAll();
+  const logFile = path.join(home, "unstuck", "unstuck.jsonl");
+  const lines = fs.readFileSync(logFile, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.ok(
+    lines.some((l) => l.event === "continue-skipped" && l.why === "awaiting-answer"),
+    "应该留下 awaiting-answer 记录",
+  );
+});
+
+test("正文里让你确认 → 关掉 respectPendingQuestion 就照旧续（对照组）", async () => {
+  const ctx = boot({ respectPendingQuestion: false });
+  const agent = createAgent("s41", [
+    asstMessage(10, 1, [{ type: "text", text: ASK_BODY_B }]),
+    turnEnd(11, { kind: "max-tokens" }),
+  ]);
+  ctx.emit("agent/status", { agent, status: "idle" });
+  await wait(30);
+
+  assert.equal(agent.sent.length, 1, "关掉开关后行为回到旧版");
+  await ctx.disposeAll();
+});
+
+test("只是陈述、没让你回答 → 照旧续（别把正常续跑也拦了）", async () => {
+  const ctx = boot({ respectPendingQuestion: true });
+  const agent = createAgent("s42", [
+    asstMessage(10, 1, [{ type: "text", text: "五张表已经建好，接下来写接口。" }]),
+    turnEnd(11, { kind: "max-tokens" }),
+  ]);
+  ctx.emit("agent/status", { agent, status: "idle" });
+  await wait(30);
+
+  assert.equal(agent.sent.length, 1, "没有求确认的话就该续");
+  await ctx.disposeAll();
+});
+
+test("等你回话之后你回了 → 不再算「在等你」", async () => {
+  const ctx = boot({ respectPendingQuestion: true });
+  const agent = createAgent("s43", [
+    asstMessage(10, 1, [{ type: "text", text: ASK_BODY_B }]),
+    turnEnd(11, { kind: "max-tokens" }),
+    {
+      type: "user/message",
+      seq: 12,
+      data: { turn: 2, message: { role: "user", content: [{ type: "text", text: "可以" }] }, source: { kind: "user" } },
+    },
+    asstMessage(20, 1, [{ type: "text", text: "开始动手。" }], 2),
+    { type: "turn/end", seq: 21, data: { turn: 2, reason: { kind: "max-tokens" } } },
+  ]);
+  ctx.emit("agent/status", { agent, status: "idle" });
+  await wait(30);
+
+  assert.equal(agent.sent.length, 1, "你已经回过话了，该续就续");
+  await ctx.disposeAll();
+});
